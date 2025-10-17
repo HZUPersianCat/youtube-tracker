@@ -1,0 +1,67 @@
+name: YouTube Channel Daily Tracker
+
+on:
+  schedule:
+    - cron: '55 12 * * *'   # 每天 UTC 12:55 = 北京时间 20:55
+  workflow_dispatch:        # 允许手动运行
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install google-api-python-client
+
+      - name: Fetch latest videos
+        env:
+          YT_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+        run: |
+          python <<'PY'
+          from googleapiclient.discovery import build
+          import json, datetime, pytz
+
+          channel_id = "UC0aUxeOYbzCQK_M1bU5n_Cg"  # biubiubuff 的频道 ID
+          youtube = build('youtube', 'v3', developerKey="${{ env.YT_KEY }}")
+
+          # 获取最近10条上传视频
+          uploads = youtube.search().list(
+              part='snippet',
+              channelId=channel_id,
+              maxResults=10,
+              order='date'
+          ).execute()
+
+          videos = []
+          for item in uploads.get('items', []):
+              vid = item['id'].get('videoId')
+              if not vid: continue
+              stats = youtube.videos().list(part='statistics', id=vid).execute()
+              views = stats['items'][0]['statistics'].get('viewCount', '0')
+              published = item['snippet']['publishedAt']
+              beijing = datetime.datetime.strptime(published, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).astimezone(pytz.timezone("Asia/Shanghai"))
+              videos.append({
+                  "title": item['snippet']['title'],
+                  "url": f"https://youtu.be/{vid}",
+                  "description": item['snippet']['description'],
+                  "published_beijing": beijing.strftime("%Y-%m-%d %H:%M:%S"),
+                  "views": views
+              })
+
+          with open("biubiubuff.json", "w", encoding="utf-8") as f:
+              json.dump(videos, f, ensure_ascii=False, indent=2)
+          PY
+
+      - name: Commit and Push JSON
+        run: |
+          git config user.name "auto"
+          git config user.email "auto@users.noreply.github.com"
+          git add biubiubuff.json
+          git commit -m "update $(date -u)" || echo "no changes"
+          git push

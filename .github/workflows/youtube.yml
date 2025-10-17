@@ -3,7 +3,7 @@ name: YouTube Channel Daily Tracker
 on:
   schedule:
     - cron: '55 12 * * *'   # 每天 UTC 12:55 = 北京时间 20:55
-  workflow_dispatch:        # 允许手动运行
+  workflow_dispatch:
 
 jobs:
   fetch:
@@ -11,54 +11,84 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install deps
         run: pip install google-api-python-client
 
-      - name: Fetch latest videos
+      - name: Fetch latest videos (by handle)
         env:
           YT_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
           python <<'PY'
+          import os, json, datetime
+          from zoneinfo import ZoneInfo
           from googleapiclient.discovery import build
-          import json, datetime, pytz
+          from googleapiclient.errors import HttpError
 
-          channel_id = "UC0aUxeOYbzCQK_M1bU5n_Cg"  # biubiubuff 的频道 ID
-          youtube = build('youtube', 'v3', developerKey="${{ env.YT_KEY }}")
+          API_KEY = os.environ["YT_KEY"]
+          HANDLE = "@biubiubuff"
 
-          # 获取最近10条上传视频
-          uploads = youtube.search().list(
-              part='snippet',
+          yt = build("youtube", "v3", developerKey=API_KEY)
+
+          def get_channel_id_from_handle(handle: str) -> str:
+            # 新接口：channels.list 支持 forHandle
+            try:
+              resp = yt.channels().list(part="id", forHandle=handle).execute()
+              items = resp.get("items", [])
+              if items:
+                return items[0]["id"]
+            except HttpError:
+              pass
+            # 兜底方案：search.list
+            s = yt.search().list(part="snippet", q=handle, type="channel", maxResults=1).execute()
+            items = s.get("items", [])
+            if items:
+              return items[0]["snippet"]["channelId"]
+            raise RuntimeError("无法解析频道ID，请检查 handle 是否正确")
+
+          channel_id = get_channel_id_from_handle(HANDLE)
+
+          # 最近 10 条视频（按时间倒序）
+          search = yt.search().list(
+              part="snippet",
               channelId=channel_id,
               maxResults=10,
-              order='date'
+              order="date",
+              type="video",
           ).execute()
 
           videos = []
-          for item in uploads.get('items', []):
-              vid = item['id'].get('videoId')
-              if not vid: continue
-              stats = youtube.videos().list(part='statistics', id=vid).execute()
-              views = stats['items'][0]['statistics'].get('viewCount', '0')
-              published = item['snippet']['publishedAt']
-              beijing = datetime.datetime.strptime(published, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).astimezone(pytz.timezone("Asia/Shanghai"))
-              videos.append({
-                  "title": item['snippet']['title'],
-                  "url": f"https://youtu.be/{vid}",
-                  "description": item['snippet']['description'],
-                  "published_beijing": beijing.strftime("%Y-%m-%d %H:%M:%S"),
-                  "views": views
-              })
+          for it in search.get("items", []):
+            vid = it["id"]["videoId"]
+            title = it["snippet"]["title"]
+            desc = it["snippet"].get("description", "")
+            published_utc = it["snippet"]["publishedAt"]  # e.g. 2025-10-17T06:41:02Z
+
+            # 取播放量
+            stats = yt.videos().list(part="statistics", id=vid).execute()
+            views = stats["items"][0]["statistics"].get("viewCount", "0")
+
+            # 转北京时间
+            dt_utc = datetime.datetime.strptime(published_utc, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC"))
+            dt_bj = dt_utc.astimezone(ZoneInfo("Asia/Shanghai"))
+
+            videos.append({
+              "title": title,
+              "url": f"https://youtu.be/{vid}",
+              "description": desc,
+              "published_beijing": dt_bj.strftime("%Y-%m-%d %H:%M:%S"),
+              "views": views
+            })
 
           with open("biubiubuff.json", "w", encoding="utf-8") as f:
-              json.dump(videos, f, ensure_ascii=False, indent=2)
+            json.dump(videos, f, ensure_ascii=False, indent=2)
           PY
 
-      - name: Commit and Push JSON
+      - name: Commit & Push JSON
         run: |
           git config user.name "auto"
           git config user.email "auto@users.noreply.github.com"

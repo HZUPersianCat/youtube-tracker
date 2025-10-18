@@ -147,3 +147,27 @@ jobs:
           git add channels.json
           git commit -m "update $(date -u)" || echo "no changes"
           git push
+
+      - name: Generate Beijing Time for Notification
+        id: date
+        run: |
+          echo "beijing=$(TZ='Asia/Shanghai' date '+%Y年%m月%d日（周%u）北京时间 %H:%M')" >> $GITHUB_OUTPUT
+
+      - name: Send email notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.qq.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USER }}
+          password: ${{ secrets.MAIL_PASS }}
+          subject: "📊 印度AI短视频增长情报日报｜${{ steps.date.outputs.beijing }}"
+          to: 3200591741@qq.com
+          from: "频道日报提醒机器人 <${{ secrets.MAIL_USER }}>"
+          secure: true
+          content_type: text/html
+          body: |
+            <p>📅 推送时间｜${{ steps.date.outputs.beijing }}</p>
+            <p>✅ 数据已更新，请打开 ChatGPT 查看完整分析报告。</p>
+            <p>🔗 JSON 数据源链接：</p>
+            <p><a href="https://raw.githubusercontent.com/HZUPersianCat/youtube-tracker/main/channels.json">channels.json</a></p>
+            <p>📌 GPT 将基于该数据自动输出结构化日报，包括新视频、爆款标记、趋势表格与总结，请留意 ChatGPT 推送。</p>

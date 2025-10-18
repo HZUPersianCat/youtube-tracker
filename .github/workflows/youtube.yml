@@ -2,11 +2,14 @@ name: YouTube Multi-Channel Daily Tracker
 
 on:
   schedule:
-    - cron: '00 13 * * *'   # 每天 UTC 13:00 = 北京时间 21:00
-  workflow_dispatch:
+    - cron: '0 23 * * *'   # 每天 UTC 23:00 = 北京时间 07:00 → 抓取并更新 channels.json
+    - cron: '0 0 * * *'    # 每天 UTC 00:00 = 北京时间 08:00 → 发送邮件提醒
+  workflow_dispatch: {}
 
 jobs:
+  # 阶段1：每日 07:00（北京）更新数据
   fetch:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 23 * * *'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -148,10 +151,16 @@ jobs:
           git commit -m "update $(date -u)" || echo "no changes"
           git push
 
+  # 阶段2：每日 08:00（北京）发送邮件提醒
+  notify:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 0 * * *'
+    runs-on: ubuntu-latest
+    steps:
       - name: Generate Beijing Time for Notification
         id: date
         run: |
-          echo "beijing=$(TZ='Asia/Shanghai' date '+%Y年%m月%d日（周%u）北京时间 %H:%M')" >> $GITHUB_OUTPUT
+          echo "beijing_date=$(TZ='Asia/Shanghai' date '+%Y-%m-%d')" >> $GITHUB_OUTPUT
+          echo "beijing_full=$(TZ='Asia/Shanghai' date '+%Y年%m月%d日（周%u）北京时间 %H:%M')" >> $GITHUB_OUTPUT
 
       - name: Send email notification
         uses: dawidd6/action-send-mail@v3
@@ -160,14 +169,14 @@ jobs:
           server_port: 465
           username: ${{ secrets.MAIL_USER }}
           password: ${{ secrets.MAIL_PASS }}
-          subject: "📊 印度AI短视频增长情报日报｜${{ steps.date.outputs.beijing }}"
+          subject: "📘 印度AI短视频情报日报（早报）｜${{ steps.date.outputs.beijing_date }}"
           to: 3200591741@qq.com
           from: "频道日报提醒机器人 <${{ secrets.MAIL_USER }}>"
           secure: true
           content_type: text/html
           body: |
-            <p>📅 推送时间｜${{ steps.date.outputs.beijing }}</p>
-            <p>✅ 数据已更新，请打开 ChatGPT 查看完整分析报告。</p>
-            <p>🔗 JSON 数据源链接：</p>
+            <p>📅 推送日期｜${{ steps.date.outputs.beijing_full }}</p>
+            <p>✅ 数据已于 <b>07:00（北京）</b> 更新完成。</p>
+            <p>🔗 最新 JSON 数据源：</p>
             <p><a href="https://raw.githubusercontent.com/HZUPersianCat/youtube-tracker/main/channels.json">channels.json</a></p>
-            <p>📌 GPT 将基于该数据自动输出结构化日报，包括新视频、爆款标记、趋势表格与总结，请留意 ChatGPT 推送。</p>
+            <p>📌 请在 ChatGPT（o3）中使用固定指令自动生成完整日报（总体简报、7天上新、24h/7d爆款、近30天≥2000万等）。</p>

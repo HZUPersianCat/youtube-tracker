@@ -2,7 +2,7 @@ name: YouTube Multi-Channel Daily Tracker
 
 on:
   schedule:
-    - cron: '0 12 * * *'   # 每天 UTC 12:00 = 北京时间 20:00
+    - cron: '00 13 * * *'   # 每天 UTC 13:00 = 北京时间 21:00
   workflow_dispatch:
 
 jobs:

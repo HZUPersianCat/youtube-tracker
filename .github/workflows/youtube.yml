@@ -1,15 +1,14 @@
-name: YouTube Multi-Channel Daily Tracker
+name: YouTube Multi-Channel Data Refresh (3x Daily)
 
 on:
   schedule:
-    - cron: '0 23 * * *'   # 每天 UTC 23:00 = 北京时间 07:00 → 抓取并更新 channels.json
-    - cron: '0 0 * * *'    # 每天 UTC 00:00 = 北京时间 08:00 → 发送邮件提醒
+    - cron: '0 0 * * *'     # 北京 08:00
+    - cron: '0 6 * * *'     # 北京 14:00
+    - cron: '30 12 * * *'   # 北京 20:30
   workflow_dispatch: {}
 
 jobs:
-  # 阶段1：每日 07:00（北京）更新数据
   fetch:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 23 * * *'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +48,7 @@ jobs:
             "@CharlieMagicShow"
           ]
 
-          PER_CHANNEL = 50
+          PER_CHANNEL = 50  # 如需更快，可改为 30/20
 
           def get_channel_id_from_handle(handle: str) -> str:
             try:
@@ -91,19 +90,20 @@ jobs:
 
               for it in items:
                 vid = it["id"].get("videoId")
-                if not vid: continue
+                if not vid: 
+                  continue
                 title = it["snippet"]["title"]
                 desc = it["snippet"].get("description", "")
                 published_utc = it["snippet"]["publishedAt"]
                 dt_utc = datetime.datetime.strptime(published_utc, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC"))
                 dt_bj = dt_utc.astimezone(ZoneInfo("Asia/Shanghai"))
-                views = stats_map.get(vid, {}).get("viewCount", "0")
+                views = int(stats_map.get(vid, {}).get("viewCount", "0") or 0)
 
+                # 精简字段：去掉大型 description（如保留请改为 desc[:200]）
                 videos.append({
                   "video_id": vid,
                   "title": title,
                   "url": f"https://youtu.be/{vid}",
-                  "description": desc,
                   "published_beijing": dt_bj.strftime("%Y-%m-%d %H:%M:%S"),
                   "views": views
                 })
@@ -113,6 +113,7 @@ jobs:
               if not page_token:
                 break
 
+            # 按发布时间倒序
             videos.sort(key=lambda x: x["published_beijing"], reverse=True)
             return videos
 
@@ -139,8 +140,9 @@ jobs:
                 "videos": []
               })
 
+          # 紧凑 JSON，体积更小（更利于 o3 加载）
           with open("channels.json", "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
+            json.dump(result, f, ensure_ascii=False, separators=(",", ":"))
           PY
 
       - name: Commit & Push JSON
@@ -150,33 +152,3 @@ jobs:
           git add channels.json
           git commit -m "update $(date -u)" || echo "no changes"
           git push
-
-  # 阶段2：每日 08:00（北京）发送邮件提醒
-  notify:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 0 * * *'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Generate Beijing Time for Notification
-        id: date
-        run: |
-          echo "beijing_date=$(TZ='Asia/Shanghai' date '+%Y-%m-%d')" >> $GITHUB_OUTPUT
-          echo "beijing_full=$(TZ='Asia/Shanghai' date '+%Y年%m月%d日（周%u）北京时间 %H:%M')" >> $GITHUB_OUTPUT
-
-      - name: Send email notification
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.qq.com
-          server_port: 465
-          username: ${{ secrets.MAIL_USER }}
-          password: ${{ secrets.MAIL_PASS }}
-          subject: "📘 印度AI短视频情报日报（早报）｜${{ steps.date.outputs.beijing_date }}"
-          to: 3200591741@qq.com
-          from: "频道日报提醒机器人 <${{ secrets.MAIL_USER }}>"
-          secure: true
-          content_type: text/html
-          body: |
-            <p>📅 推送日期｜${{ steps.date.outputs.beijing_full }}</p>
-            <p>✅ 数据已于 <b>07:00（北京）</b> 更新完成。</p>
-            <p>🔗 最新 JSON 数据源：</p>
-            <p><a href="https://raw.githubusercontent.com/HZUPersianCat/youtube-tracker/main/channels.json">channels.json</a></p>
-            <p>📌 请在 ChatGPT（o3）中使用固定指令自动生成完整日报（总体简报、7天上新、24h/7d爆款、近30天≥2000万等）。</p>
